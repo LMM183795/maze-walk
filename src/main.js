@@ -39,6 +39,12 @@ const DIFFICULTIES = {
     baseRows: 9,
     hint: "起步更大，路线更长",
   },
+  demon: {
+    label: "魔王",
+    baseCols: 17,
+    baseRows: 13,
+    hint: "极限挑战，路线最长",
+  },
 };
 
 const DIFFICULTY_KEY = "maze-walk:difficulty";
@@ -75,6 +81,7 @@ let level = 1;
 let steps = 0;
 let startedAt = 0;
 let maze = null;
+let floorColors = [];
 let player = [1, 1];
 let running = false;
 let won = false;
@@ -122,6 +129,18 @@ function sizeForLevel(n) {
   };
 }
 
+function buildFloorColors() {
+  return maze.grid.map((row) =>
+    row.map((value) => {
+      if (value !== 0) return null;
+      const hue = Math.floor(Math.random() * 360);
+      const saturation = 60 + Math.floor(Math.random() * 21);
+      const lightness = 22 + Math.floor(Math.random() * 11);
+      return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+    }),
+  );
+}
+
 function applyDifficultyUI() {
   const config = DIFFICULTIES[difficulty];
   difficultyLabel.textContent = config.label;
@@ -165,17 +184,28 @@ function paintMazeLayer() {
 
   mazeCtx.fillStyle = "#050814";
   mazeCtx.fillRect(0, 0, mazeLayer.width, mazeLayer.height);
+  mazeCtx.lineCap = "round";
+  mazeCtx.strokeStyle = "rgba(160, 180, 220, 0.52)";
+  mazeCtx.lineWidth = Math.max(1, cell * 0.055);
 
   for (let y = 0; y < maze.height; y += 1) {
     for (let x = 0; x < maze.width; x += 1) {
       const px = ox + x * cell;
       const py = oy + y * cell;
       if (maze.grid[y][x] === 1) {
-        mazeCtx.fillStyle = (x + y) % 2 === 0 ? "#121a33" : "#0e162c";
+        mazeCtx.fillStyle = (x + y) % 2 === 0 ? "#0c1424" : "#10192c";
+        mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
+        const pad = Math.max(2, cell * 0.24);
+        mazeCtx.beginPath();
+        mazeCtx.moveTo(px + pad, py + pad);
+        mazeCtx.lineTo(px + cell - pad, py + cell - pad);
+        mazeCtx.moveTo(px + cell - pad, py + pad);
+        mazeCtx.lineTo(px + pad, py + cell - pad);
+        mazeCtx.stroke();
       } else {
-        mazeCtx.fillStyle = "#182444";
+        mazeCtx.fillStyle = floorColors[y]?.[x] || "#182444";
+        mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
       }
-      mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
     }
   }
 }
@@ -184,6 +214,7 @@ function resetLevel() {
   stopInputs();
   const { cols, rows } = sizeForLevel(level);
   maze = generateMaze(cols, rows);
+  floorColors = buildFloorColors();
   player = [...maze.start];
   steps = 0;
   won = false;
