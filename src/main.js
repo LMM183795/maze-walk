@@ -1,10 +1,12 @@
 import "./style.css";
-import { generateMaze } from "./maze.js";
+import { generateMaze, selectDecoyCells } from "./maze.js";
 
 const canvas = document.querySelector("#maze");
 const ctx = canvas.getContext("2d");
 const mazeLayer = document.createElement("canvas");
 const mazeCtx = mazeLayer.getContext("2d");
+const fogLayer = document.createElement("canvas");
+const fogCtx = fogLayer.getContext("2d");
 const overlay = document.querySelector("#overlay");
 const overlayEyebrow = overlay.querySelector(".eyebrow");
 const overlayTitle = overlay.querySelector("h1");
@@ -19,6 +21,7 @@ const difficultyLabel = document.querySelector("#difficulty-label");
 const levelEl = document.querySelector("#level");
 const stepsEl = document.querySelector("#steps");
 const timerEl = document.querySelector("#timer");
+const toastEl = document.querySelector("#toast");
 
 const DIFFICULTIES = {
   easy: {
@@ -32,22 +35,22 @@ const DIFFICULTIES = {
     label: "标准",
     baseCols: 9,
     baseRows: 7,
-    loopChance: 0.04,
+    loopChance: 0,
     hint: "经典尺寸，稳步变大",
   },
   hard: {
     label: "挑战",
     baseCols: 13,
     baseRows: 9,
-    loopChance: 0.1,
+    loopChance: 0.04,
     hint: "起步更大，路线更长",
   },
   demon: {
     label: "魔王",
     baseCols: 21,
     baseRows: 15,
-    loopChance: 0.2,
-    hint: "多岔路、多环路，极限挑战",
+    loopChance: 0,
+    hint: "迷雾与假出口，极限挑战",
   },
 };
 
@@ -56,6 +59,8 @@ const POINTER_FIRST_DELAY = 50;
 const KEY_FIRST_DELAY = 80;
 const MOVE_REPEAT = 40;
 const BLOCKED_RETRY = 70;
+const VISION_RADIUS = 4.2;
+const FAKE_EXIT_PENALTY = 5;
 const START_LEDE =
   "轻点走一步，按住鼠标朝指针方向连续移动；方向键 / WASD 按住也能连续移动。手机可滑动或使用屏幕按钮。";
 
@@ -90,6 +95,11 @@ let player = [1, 1];
 let running = false;
 let won = false;
 let difficulty = loadDifficulty();
+let decoys = [];
+let explored = [];
+let visible = [];
+let penaltySeconds = 0;
+let toastTimer = 0;
 
 const view = { cell: 24, ox: 0, oy: 0 };
 const pointer = {
@@ -135,16 +145,9 @@ function sizeForLevel(n) {
 
 function buildTileColors() {
   return maze.grid.map((row) =>
-    row.map((value) => {
+    row.map(() => {
       const hue = Math.floor(Math.random() * 360);
-      if (value === 1) {
-        const saturation = 20 + Math.floor(Math.random() * 20);
-        const lightness = 8 + Math.floor(Math.random() * 7);
-        return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-      }
-      const saturation = 60 + Math.floor(Math.random() * 21);
-      const lightness = 22 + Math.floor(Math.random() * 11);
-      return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+      return `hsl(${hue}, 70%, 27%)`;
     }),
   );
 }
@@ -182,6 +185,7 @@ function resize() {
   view.ox = Math.floor((canvas.width - maze.width * view.cell) / 2);
   view.oy = Math.floor((canvas.height - maze.height * view.cell) / 2);
   paintMazeLayer();
+  paintFogLayer();
 }
 
 function paintMazeLayer() {
@@ -200,9 +204,9 @@ function paintMazeLayer() {
     for (let x = 0; x < maze.width; x += 1) {
       const px = ox + x * cell;
       const py = oy + y * cell;
+      mazeCtx.fillStyle = tileColors[y]?.[x] || "#182444";
+      mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
       if (maze.grid[y][x] === 1) {
-        mazeCtx.fillStyle = tileColors[y]?.[x] || "#0c1424";
-        mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
         const pad = Math.max(2, cell * 0.24);
         mazeCtx.beginPath();
         mazeCtx.moveTo(px + pad, py + pad);
@@ -210,12 +214,78 @@ function paintMazeLayer() {
         mazeCtx.moveTo(px + cell - pad, py + pad);
         mazeCtx.lineTo(px + pad, py + cell - pad);
         mazeCtx.stroke();
-      } else {
-        mazeCtx.fillStyle = tileColors[y]?.[x] || "#182444";
-        mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
       }
     }
   }
+}
+
+function isDemon() {
+  return difficulty === "demon";
+}
+
+function paintFogLayer() {
+  const width = canvas.width;
+  const height = canvas.height;
+  if (fogLayer.width !== width || fogLayer.height !== height) {
+    fogLayer.width = width;
+    fogLayer.height = height;
+  }
+  fogCtx.globalCompositeOperation = "source-over";
+  fogCtx.clearRect(0, 0, width, height);
+  if (!maze || !isDemon() || !explored.length) return;
+
+  const { cell, ox, oy } = view;
+  fogCtx.fillStyle = "rgba(3, 6, 16, 0.96)";
+  fogCtx.fillRect(0, 0, width, height);
+  fogCtx.globalCompositeOperation = "destination-out";
+
+  for (let y = 0; y < maze.height; y += 1) {
+    for (let x = 0; x < maze.width; x += 1) {
+      const alpha = visible[y]?.[x] ? 1 : explored[y]?.[x] ? 0.52 : 0;
+      if (alpha === 0) continue;
+      fogCtx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+      fogCtx.fillRect(ox + x * cell, oy + y * cell, cell + 0.5, cell + 0.5);
+    }
+  }
+  fogCtx.globalCompositeOperation = "source-over";
+}
+
+function resetVision() {
+  explored = Array.from({ length: maze.height }, () => Array(maze.width).fill(false));
+  visible = Array.from({ length: maze.height }, () => Array(maze.width).fill(false));
+}
+
+function revealAroundPlayer() {
+  if (!maze) return;
+  if (!isDemon()) {
+    paintFogLayer();
+    return;
+  }
+
+  for (const row of visible) row.fill(false);
+  const [px, py] = player;
+  const radiusSq = VISION_RADIUS * VISION_RADIUS;
+  for (let y = 0; y < maze.height; y += 1) {
+    for (let x = 0; x < maze.width; x += 1) {
+      const dx = x - px;
+      const dy = y - py;
+      if (dx * dx + dy * dy > radiusSq) continue;
+      visible[y][x] = true;
+      explored[y][x] = true;
+    }
+  }
+  paintFogLayer();
+}
+
+function buildDecoys() {
+  if (!isDemon()) return [];
+  const count = 3 + Math.min(2, Math.floor((level - 1) / 2));
+  return selectDecoyCells(maze, count).map(([x, y]) => ({
+    x,
+    y,
+    triggered: false,
+    phase: Math.random() * Math.PI * 2,
+  }));
 }
 
 function resetLevel() {
@@ -223,14 +293,20 @@ function resetLevel() {
   const { cols, rows } = sizeForLevel(level);
   maze = generateMaze(cols, rows, DIFFICULTIES[difficulty].loopChance);
   tileColors = buildTileColors();
+  decoys = buildDecoys();
   player = [...maze.start];
   steps = 0;
   won = false;
+  penaltySeconds = 0;
   startedAt = performance.now();
   stepsEl.textContent = "0";
   timerEl.textContent = "0.0";
   levelEl.textContent = String(level);
+  if (toastEl) toastEl.classList.remove("show");
+  clearTimeout(toastTimer);
+  resetVision();
   resize();
+  revealAroundPlayer();
 }
 
 function tryMove(dir) {
@@ -244,9 +320,17 @@ function tryMove(dir) {
   player = [nx, ny];
   steps += 1;
   stepsEl.textContent = String(steps);
+  revealAroundPlayer();
+
+  const decoy = decoys.find((item) => !item.triggered && item.x === nx && item.y === ny);
+  if (decoy) {
+    decoy.triggered = true;
+    penaltySeconds += FAKE_EXIT_PENALTY;
+    showToast(`假出口！+${FAKE_EXIT_PENALTY} 秒`);
+  }
 
   if (nx === maze.goal[0] && ny === maze.goal[1]) {
-    const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
+    const seconds = ((performance.now() - startedAt) / 1000 + penaltySeconds).toFixed(1);
     completeLevel(seconds);
   }
   return true;
@@ -263,9 +347,11 @@ function completeLevel(seconds) {
 
 function showWinScreen(completedLevel, seconds) {
   const config = DIFFICULTIES[difficulty];
+  const penaltyNote =
+    penaltySeconds > 0 ? `（含假出口罚时 ${penaltySeconds} 秒）` : "";
   overlayEyebrow.textContent = `${config.label} · 第 ${completedLevel} 关完成`;
   overlayTitle.textContent = "找到出口了";
-  overlayLede.textContent = `用了 ${steps} 步，耗时 ${seconds} 秒。下一关迷宫会更大。`;
+  overlayLede.textContent = `用了 ${steps} 步，耗时 ${seconds} 秒${penaltyNote}。下一关迷宫会更大。`;
   startBtn.textContent = "下一关";
   difficultyGroup.hidden = true;
   reselectBtn.hidden = false;
@@ -423,6 +509,40 @@ function updateKeyboardMovement(now) {
   }
 }
 
+function drawGoldOrb(x, y, now, phase = 0) {
+  const { cell, ox, oy } = view;
+  const glow = 0.55 + Math.sin(now / 280 + phase) * 0.25;
+  ctx.fillStyle = `rgba(246, 196, 92, ${glow})`;
+  ctx.beginPath();
+  ctx.arc(ox + (x + 0.5) * cell, oy + (y + 0.5) * cell, cell * 0.32, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTriggeredDecoy(decoy) {
+  const { cell, ox, oy } = view;
+  const cx = ox + (decoy.x + 0.5) * cell;
+  const cy = oy + (decoy.y + 0.5) * cell;
+  const pad = cell * 0.27;
+  ctx.strokeStyle = "rgba(255, 92, 92, 0.85)";
+  ctx.lineWidth = Math.max(2, cell * 0.07);
+  ctx.beginPath();
+  ctx.moveTo(cx - pad, cy - pad);
+  ctx.lineTo(cx + pad, cy + pad);
+  ctx.moveTo(cx + pad, cy - pad);
+  ctx.lineTo(cx - pad, cy + pad);
+  ctx.stroke();
+}
+
+function showToast(message) {
+  if (!toastEl) return;
+  toastEl.textContent = message;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toastEl.classList.remove("show");
+  }, 2000);
+}
+
 function draw(now) {
   requestAnimationFrame(draw);
   if (!maze) return;
@@ -430,20 +550,21 @@ function draw(now) {
   updateKeyboardMovement(now);
 
   const { cell, ox, oy } = view;
-  const elapsed = running ? (now - startedAt) / 1000 : Number(timerEl.textContent) || 0;
   if (running) {
-    const text = elapsed.toFixed(1);
+    const text = ((now - startedAt) / 1000 + penaltySeconds).toFixed(1);
     if (timerEl.textContent !== text) timerEl.textContent = text;
   }
 
   ctx.drawImage(mazeLayer, 0, 0);
 
   const [gx, gy] = maze.goal;
-  const glow = 0.55 + Math.sin(now / 280) * 0.25;
-  ctx.fillStyle = `rgba(246, 196, 92, ${glow})`;
-  ctx.beginPath();
-  ctx.arc(ox + (gx + 0.5) * cell, oy + (gy + 0.5) * cell, cell * 0.32, 0, Math.PI * 2);
-  ctx.fill();
+  drawGoldOrb(gx, gy, now);
+  for (const decoy of decoys) {
+    if (decoy.triggered) drawTriggeredDecoy(decoy);
+    else drawGoldOrb(decoy.x, decoy.y, now, decoy.phase);
+  }
+
+  if (running && isDemon()) ctx.drawImage(fogLayer, 0, 0);
 
   const [px, py] = player;
   const cx = ox + (px + 0.5) * cell;
@@ -536,6 +657,32 @@ window.addEventListener("resize", () => {
   stopInputs();
   resize();
 });
+
+if (import.meta.env.DEV) {
+  window.__mazeTest = {
+    state: () =>
+      maze
+        ? {
+            width: maze.width,
+            height: maze.height,
+            grid: maze.grid,
+            start: [...maze.start],
+            goal: [...maze.goal],
+            player: [...player],
+            decoys: decoys.map((item) => ({ ...item })),
+            penaltySeconds,
+            visible: visible.map((row) => [...row]),
+            explored: explored.map((row) => [...row]),
+          }
+        : null,
+    teleport: (x, y) => {
+      if (maze?.grid[y]?.[x] !== 0) return false;
+      player = [x, y];
+      revealAroundPlayer();
+      return true;
+    },
+  };
+}
 
 applyDifficultyUI();
 prepareNewRun();

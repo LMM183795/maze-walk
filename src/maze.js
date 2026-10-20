@@ -61,3 +61,85 @@ export function generateMaze(cols, rows, loopChance = 0) {
 
   return { grid, width, height, start: [1, 1], goal: [width - 2, height - 2] };
 }
+
+export function findDeadEnds(maze) {
+  const ends = [];
+  for (let y = 1; y < maze.height - 1; y += 1) {
+    for (let x = 1; x < maze.width - 1; x += 1) {
+      if (maze.grid[y][x] !== 0) continue;
+      let degree = 0;
+      if (maze.grid[y - 1][x] === 0) degree += 1;
+      if (maze.grid[y + 1][x] === 0) degree += 1;
+      if (maze.grid[y][x - 1] === 0) degree += 1;
+      if (maze.grid[y][x + 1] === 0) degree += 1;
+      if (degree === 1) ends.push([x, y]);
+    }
+  }
+  return ends;
+}
+
+export function distanceMap(maze, start) {
+  const dist = Array.from({ length: maze.height }, () => Array(maze.width).fill(-1));
+  const [sx, sy] = start;
+  dist[sy][sx] = 0;
+  const queue = [[sx, sy]];
+
+  for (let head = 0; head < queue.length; head += 1) {
+    const [x, y] = queue[head];
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= maze.width || ny >= maze.height) continue;
+      if (maze.grid[ny][nx] !== 0 || dist[ny][nx] !== -1) continue;
+      dist[ny][nx] = dist[y][x] + 1;
+      queue.push([nx, ny]);
+    }
+  }
+  return dist;
+}
+
+export function selectDecoyCells(maze, count) {
+  if (count <= 0) return [];
+  const startDist = distanceMap(maze, maze.start);
+  const goalDist = distanceMap(maze, maze.goal);
+  const [sx, sy] = maze.start;
+  const [gx, gy] = maze.goal;
+
+  const candidates = findDeadEnds(maze).filter(([x, y]) => {
+    if (x === sx && y === sy) return false;
+    if (x === gx && y === gy) return false;
+    return startDist[y][x] >= 6 && goalDist[y][x] >= 3;
+  });
+  if (!candidates.length) return [];
+
+  const picked = [];
+  const isSeparated = (x, y) =>
+    picked.every(([px, py]) => Math.abs(px - x) + Math.abs(py - y) >= 4);
+  const add = ([x, y]) => {
+    if (picked.length >= count) return;
+    if (picked.some(([px, py]) => px === x && py === y)) return;
+    if (isSeparated(x, y)) picked.push([x, y]);
+  };
+
+  const maxStart = Math.max(...candidates.map(([x, y]) => startDist[y][x]));
+  const early = [...candidates].sort(
+    (a, b) =>
+      Math.abs(startDist[a[1]][a[0]] - maxStart * 0.3) -
+      Math.abs(startDist[b[1]][b[0]] - maxStart * 0.3),
+  )[0];
+  add(early);
+
+  const nearGoal = candidates
+    .filter(([x, y]) => startDist[y][x] >= 8)
+    .sort((a, b) => goalDist[a[1]][a[0]] - goalDist[b[1]][b[0]]);
+  if (nearGoal.length) add(nearGoal[0]);
+
+  const shuffled = [...candidates];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  for (const cell of shuffled) add(cell);
+
+  return picked.slice(0, count);
+}
