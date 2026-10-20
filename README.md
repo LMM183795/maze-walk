@@ -4,7 +4,10 @@
 
 ## 在线试玩
 
-https://maze-walk.vercel.app
+- GitHub Pages（微信/国内推荐）：https://lmm183795.github.io/maze-walk/
+- Vercel：https://maze-walk.vercel.app
+
+> 如果微信打开 Vercel 地址出现 `ERR_CONNECTION_REFUSED`，请改用 GitHub Pages 地址。
 
 ## 操作
 
