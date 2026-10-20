@@ -332,7 +332,7 @@ function updatePointerMovement(now) {
 }
 
 function draw(now) {
-  raf = requestAnimationFrame(draw);
+  requestAnimationFrame(draw);
   if (!maze) return;
   updatePointerMovement(now);
 
