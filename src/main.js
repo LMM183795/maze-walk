@@ -3,6 +3,8 @@ import { generateMaze } from "./maze.js";
 
 const canvas = document.querySelector("#maze");
 const ctx = canvas.getContext("2d");
+const mazeLayer = document.createElement("canvas");
+const mazeCtx = mazeLayer.getContext("2d");
 const overlay = document.querySelector("#overlay");
 const overlayEyebrow = overlay.querySelector(".eyebrow");
 const overlayTitle = overlay.querySelector("h1");
@@ -40,11 +42,12 @@ const DIFFICULTIES = {
 };
 
 const DIFFICULTY_KEY = "maze-walk:difficulty";
-const POINTER_FIRST_DELAY = 180;
-const POINTER_REPEAT = 130;
-const POINTER_BLOCKED_RETRY = 160;
+const POINTER_FIRST_DELAY = 50;
+const KEY_FIRST_DELAY = 80;
+const MOVE_REPEAT = 40;
+const BLOCKED_RETRY = 70;
 const START_LEDE =
-  "轻点走一步，按住鼠标朝指针方向连续移动；也可用方向键 / WASD。手机可滑动或使用屏幕按钮。";
+  "轻点走一步，按住鼠标朝指针方向连续移动；方向键 / WASD 按住也能连续移动。手机可滑动或使用屏幕按钮。";
 
 const DIRS = {
   up: [0, -1],
@@ -85,6 +88,10 @@ const pointer = {
   y: 0,
   nextAt: 0,
   inside: false,
+};
+const keyboard = {
+  dir: null,
+  nextAt: 0,
 };
 
 function loadDifficulty() {
@@ -147,10 +154,34 @@ function resize() {
   );
   view.ox = Math.floor((canvas.width - maze.width * view.cell) / 2);
   view.oy = Math.floor((canvas.height - maze.height * view.cell) / 2);
+  paintMazeLayer();
+}
+
+function paintMazeLayer() {
+  if (!maze) return;
+  mazeLayer.width = canvas.width;
+  mazeLayer.height = canvas.height;
+  const { cell, ox, oy } = view;
+
+  mazeCtx.fillStyle = "#050814";
+  mazeCtx.fillRect(0, 0, mazeLayer.width, mazeLayer.height);
+
+  for (let y = 0; y < maze.height; y += 1) {
+    for (let x = 0; x < maze.width; x += 1) {
+      const px = ox + x * cell;
+      const py = oy + y * cell;
+      if (maze.grid[y][x] === 1) {
+        mazeCtx.fillStyle = (x + y) % 2 === 0 ? "#121a33" : "#0e162c";
+      } else {
+        mazeCtx.fillStyle = "#182444";
+      }
+      mazeCtx.fillRect(px, py, cell + 0.5, cell + 0.5);
+    }
+  }
 }
 
 function resetLevel() {
-  endPointer();
+  stopInputs();
   const { cols, rows } = sizeForLevel(level);
   maze = generateMaze(cols, rows);
   player = [...maze.start];
@@ -186,7 +217,7 @@ function completeLevel(seconds) {
   const completedLevel = level;
   running = false;
   won = true;
-  endPointer();
+  stopInputs();
   level += 1;
   showWinScreen(completedLevel, seconds);
 }
@@ -223,7 +254,7 @@ function prepareNewRun() {
 }
 
 function startGame() {
-  endPointer();
+  stopInputs();
   running = false;
   resetLevel();
   running = true;
@@ -275,12 +306,23 @@ function endPointer() {
   }
 }
 
+function stopKeyboard() {
+  keyboard.dir = null;
+  keyboard.nextAt = 0;
+}
+
+function stopInputs() {
+  endPointer();
+  stopKeyboard();
+}
+
 function onPointerDown(event) {
   if (event.pointerType === "touch" || event.button !== 0 || !running) return;
   const point = eventCanvasPoint(event);
   if (!point) return;
 
   event.preventDefault();
+  stopKeyboard();
   pointer.active = true;
   pointer.id = event.pointerId;
   pointer.x = point.x;
@@ -320,14 +362,25 @@ function updatePointerMovement(now) {
 
   const dir = directionFromPointer(pointer.x, pointer.y);
   if (!dir) {
-    pointer.nextAt = now + POINTER_BLOCKED_RETRY;
+    pointer.nextAt = now + BLOCKED_RETRY;
     return;
   }
 
   if (tryMove(dir)) {
-    if (pointer.active) pointer.nextAt = now + POINTER_REPEAT;
+    if (pointer.active) pointer.nextAt = now + MOVE_REPEAT;
   } else {
-    pointer.nextAt = now + POINTER_BLOCKED_RETRY;
+    pointer.nextAt = now + BLOCKED_RETRY;
+  }
+}
+
+function updateKeyboardMovement(now) {
+  if (!running || !keyboard.dir) return;
+  if (now < keyboard.nextAt) return;
+
+  if (tryMove(keyboard.dir)) {
+    if (keyboard.dir) keyboard.nextAt = now + MOVE_REPEAT;
+  } else {
+    keyboard.nextAt = now + BLOCKED_RETRY;
   }
 }
 
@@ -335,27 +388,16 @@ function draw(now) {
   requestAnimationFrame(draw);
   if (!maze) return;
   updatePointerMovement(now);
+  updateKeyboardMovement(now);
 
   const { cell, ox, oy } = view;
   const elapsed = running ? (now - startedAt) / 1000 : Number(timerEl.textContent) || 0;
-  if (running) timerEl.textContent = elapsed.toFixed(1);
-
-  ctx.fillStyle = "#050814";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  for (let y = 0; y < maze.height; y += 1) {
-    for (let x = 0; x < maze.width; x += 1) {
-      const px = ox + x * cell;
-      const py = oy + y * cell;
-      if (maze.grid[y][x] === 1) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? "#121a33" : "#0e162c";
-        ctx.fillRect(px, py, cell + 0.5, cell + 0.5);
-      } else {
-        ctx.fillStyle = "#182444";
-        ctx.fillRect(px, py, cell + 0.5, cell + 0.5);
-      }
-    }
+  if (running) {
+    const text = elapsed.toFixed(1);
+    if (timerEl.textContent !== text) timerEl.textContent = text;
   }
+
+  ctx.drawImage(mazeLayer, 0, 0);
 
   const [gx, gy] = maze.goal;
   const glow = 0.55 + Math.sin(now / 280) * 0.25;
@@ -365,13 +407,16 @@ function draw(now) {
   ctx.fill();
 
   const [px, py] = player;
-  ctx.fillStyle = "#6ee7ff";
-  ctx.shadowColor = "#6ee7ff";
-  ctx.shadowBlur = 16;
+  const cx = ox + (px + 0.5) * cell;
+  const cy = oy + (py + 0.5) * cell;
+  ctx.fillStyle = "rgba(110, 231, 255, 0.18)";
   ctx.beginPath();
-  ctx.arc(ox + (px + 0.5) * cell, oy + (py + 0.5) * cell, cell * 0.28, 0, Math.PI * 2);
+  ctx.arc(cx, cy, cell * 0.44, 0, Math.PI * 2);
   ctx.fill();
-  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#6ee7ff";
+  ctx.beginPath();
+  ctx.arc(cx, cy, cell * 0.28, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 for (const button of difficultyButtons) {
@@ -393,18 +438,30 @@ window.addEventListener("keydown", (event) => {
   const dir = KEYS[event.key];
   if (!dir) return;
   event.preventDefault();
+  if (!running || event.repeat) return;
   if (pointer.active) endPointer();
+  keyboard.dir = dir;
+  keyboard.nextAt = performance.now() + KEY_FIRST_DELAY;
   tryMove(dir);
 });
 
+window.addEventListener("keyup", (event) => {
+  const dir = KEYS[event.key];
+  if (dir && keyboard.dir === dir) stopKeyboard();
+});
+
 document.querySelectorAll("[data-dir]").forEach((btn) => {
-  btn.addEventListener("click", () => tryMove(btn.dataset.dir));
+  btn.addEventListener("click", () => {
+    stopKeyboard();
+    tryMove(btn.dataset.dir);
+  });
 });
 
 let touchStart = null;
 canvas.addEventListener(
   "touchstart",
   (event) => {
+    stopKeyboard();
     const t = event.changedTouches[0];
     touchStart = [t.clientX, t.clientY];
   },
@@ -432,12 +489,12 @@ canvas.addEventListener("pointercancel", onPointerUp);
 canvas.addEventListener("lostpointercapture", endPointer);
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("pointercancel", onPointerUp);
-window.addEventListener("blur", endPointer);
+window.addEventListener("blur", stopInputs);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) endPointer();
+  if (document.hidden) stopInputs();
 });
 window.addEventListener("resize", () => {
-  endPointer();
+  stopInputs();
   resize();
 });
 
