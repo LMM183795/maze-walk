@@ -59,7 +59,31 @@ export function generateMaze(cols, rows, loopChance = 0) {
     }
   }
 
-  return { grid, width, height, start: [1, 1], goal: [width - 2, height - 2] };
+  // 出口随机落在离起点较远的通道中，避免固定在地图右下角。
+  const start = [1, 1];
+  const distances = distanceMap({ grid, width, height, start, goal: null }, start);
+  let maxDistance = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (distances[y][x] > maxDistance) maxDistance = distances[y][x];
+    }
+  }
+  const goalCandidates = [];
+  const minDistance = maxDistance * 0.55;
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      if (grid[y][x] !== 0) continue;
+      if (x === 1 && y === 1) continue;
+      if (distances[y][x] >= minDistance) goalCandidates.push([x, y]);
+    }
+  }
+  const goal =
+    goalCandidates[Math.floor(Math.random() * goalCandidates.length)] || [
+      width - 2,
+      height - 2,
+    ];
+
+  return { grid, width, height, start, goal };
 }
 
 export function findDeadEnds(maze) {
