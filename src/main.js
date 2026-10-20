@@ -4,10 +4,47 @@ import { generateMaze } from "./maze.js";
 const canvas = document.querySelector("#maze");
 const ctx = canvas.getContext("2d");
 const overlay = document.querySelector("#overlay");
+const overlayEyebrow = overlay.querySelector(".eyebrow");
+const overlayTitle = overlay.querySelector("h1");
+const overlayLede = overlay.querySelector(".lede");
 const startBtn = document.querySelector("#start-btn");
+const reselectBtn = document.querySelector("#reselect-btn");
+const restartBtn = document.querySelector("#restart-btn");
+const difficultyGroup = document.querySelector(".difficulty");
+const difficultyButtons = [...document.querySelectorAll("[data-difficulty]")];
+const difficultyHint = document.querySelector("#difficulty-hint");
+const difficultyLabel = document.querySelector("#difficulty-label");
 const levelEl = document.querySelector("#level");
 const stepsEl = document.querySelector("#steps");
 const timerEl = document.querySelector("#timer");
+
+const DIFFICULTIES = {
+  easy: {
+    label: "轻松",
+    baseCols: 7,
+    baseRows: 5,
+    hint: "迷宫更小，适合熟悉操作",
+  },
+  normal: {
+    label: "标准",
+    baseCols: 9,
+    baseRows: 7,
+    hint: "经典尺寸，稳步变大",
+  },
+  hard: {
+    label: "挑战",
+    baseCols: 13,
+    baseRows: 9,
+    hint: "起步更大，路线更长",
+  },
+};
+
+const DIFFICULTY_KEY = "maze-walk:difficulty";
+const POINTER_FIRST_DELAY = 180;
+const POINTER_REPEAT = 130;
+const POINTER_BLOCKED_RETRY = 160;
+const START_LEDE =
+  "轻点走一步，按住鼠标朝指针方向连续移动；也可用方向键 / WASD。手机可滑动或使用屏幕按钮。";
 
 const DIRS = {
   up: [0, -1],
@@ -36,16 +73,84 @@ let steps = 0;
 let startedAt = 0;
 let maze = null;
 let player = [1, 1];
-let cell = 24;
 let running = false;
 let won = false;
-let raf = 0;
+let difficulty = loadDifficulty();
+
+const view = { cell: 24, ox: 0, oy: 0 };
+const pointer = {
+  active: false,
+  id: null,
+  x: 0,
+  y: 0,
+  nextAt: 0,
+  inside: false,
+};
+
+function loadDifficulty() {
+  try {
+    const stored = localStorage.getItem(DIFFICULTY_KEY);
+    if (stored && Object.prototype.hasOwnProperty.call(DIFFICULTIES, stored)) {
+      return stored;
+    }
+  } catch {
+    // 隐私模式或存储被禁用时使用默认难度。
+  }
+  return "normal";
+}
+
+function saveDifficulty() {
+  try {
+    localStorage.setItem(DIFFICULTY_KEY, difficulty);
+  } catch {
+    // 保存失败不影响当前游戏。
+  }
+}
 
 function sizeForLevel(n) {
-  return { cols: 9 + n * 2, rows: 7 + n * 2 };
+  const config = DIFFICULTIES[difficulty];
+  return {
+    cols: config.baseCols + n * 2,
+    rows: config.baseRows + n * 2,
+  };
+}
+
+function applyDifficultyUI() {
+  const config = DIFFICULTIES[difficulty];
+  difficultyLabel.textContent = config.label;
+  for (const button of difficultyButtons) {
+    const active = button.dataset.difficulty === difficulty;
+    button.setAttribute("aria-pressed", String(active));
+  }
+  const { cols, rows } = sizeForLevel(1);
+  difficultyHint.textContent = `第 1 关 ${cols} × ${rows}，${config.hint}`;
+}
+
+function setDifficulty(next) {
+  if (next === difficulty || !Object.prototype.hasOwnProperty.call(DIFFICULTIES, next)) {
+    return;
+  }
+  difficulty = next;
+  saveDifficulty();
+  applyDifficultyUI();
+}
+
+function resize() {
+  if (!maze) return;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  view.cell = Math.max(
+    1,
+    Math.floor(Math.min(canvas.width / maze.width, canvas.height / maze.height)),
+  );
+  view.ox = Math.floor((canvas.width - maze.width * view.cell) / 2);
+  view.oy = Math.floor((canvas.height - maze.height * view.cell) / 2);
 }
 
 function resetLevel() {
+  endPointer();
   const { cols, rows } = sizeForLevel(level);
   maze = generateMaze(cols, rows);
   player = [...maze.start];
@@ -53,51 +158,187 @@ function resetLevel() {
   won = false;
   startedAt = performance.now();
   stepsEl.textContent = "0";
+  timerEl.textContent = "0.0";
   levelEl.textContent = String(level);
   resize();
 }
 
-function resize() {
-  if (!maze) return;
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.floor(rect.width * dpr);
-  canvas.height = Math.floor(rect.height * dpr);
-  cell = Math.floor(Math.min(canvas.width / maze.width, canvas.height / maze.height));
-}
-
 function tryMove(dir) {
-  if (!running || won || !maze) return;
+  if (!running || won || !maze) return false;
   const [dx, dy] = DIRS[dir];
   const [x, y] = player;
   const nx = x + dx;
   const ny = y + dy;
-  if (maze.grid[ny]?.[nx] !== 0) return;
+  if (maze.grid[ny]?.[nx] !== 0) return false;
+
   player = [nx, ny];
   steps += 1;
   stepsEl.textContent = String(steps);
+
   if (nx === maze.goal[0] && ny === maze.goal[1]) {
-    won = true;
-    running = false;
     const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
-    overlay.querySelector(".eyebrow").textContent = `第 ${level} 关完成`;
-    overlay.querySelector("h1").textContent = "找到出口了";
-    overlay.querySelector(".lede").textContent = `用了 ${steps} 步，耗时 ${seconds} 秒。下一关迷宫会更大。`;
-    startBtn.textContent = "下一关";
-    overlay.classList.remove("hidden");
-    level += 1;
+    completeLevel(seconds);
+  }
+  return true;
+}
+
+function completeLevel(seconds) {
+  const completedLevel = level;
+  running = false;
+  won = true;
+  endPointer();
+  level += 1;
+  showWinScreen(completedLevel, seconds);
+}
+
+function showWinScreen(completedLevel, seconds) {
+  const config = DIFFICULTIES[difficulty];
+  overlayEyebrow.textContent = `${config.label} · 第 ${completedLevel} 关完成`;
+  overlayTitle.textContent = "找到出口了";
+  overlayLede.textContent = `用了 ${steps} 步，耗时 ${seconds} 秒。下一关迷宫会更大。`;
+  startBtn.textContent = "下一关";
+  difficultyGroup.hidden = true;
+  reselectBtn.hidden = false;
+  overlay.classList.remove("hidden");
+}
+
+function showStartScreen() {
+  overlayEyebrow.textContent = "MAZE WALK";
+  overlayTitle.textContent = "走迷宫";
+  overlayLede.textContent = START_LEDE;
+  startBtn.textContent = "开始探索";
+  difficultyGroup.hidden = false;
+  reselectBtn.hidden = true;
+  restartBtn.hidden = true;
+  overlay.classList.remove("hidden");
+}
+
+function prepareNewRun() {
+  running = false;
+  won = false;
+  level = 1;
+  resetLevel();
+  applyDifficultyUI();
+  showStartScreen();
+}
+
+function startGame() {
+  endPointer();
+  running = false;
+  resetLevel();
+  running = true;
+  restartBtn.hidden = false;
+  overlay.classList.add("hidden");
+  startBtn.blur();
+}
+
+function eventCanvasPoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+  if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
+  return { x, y };
+}
+
+function cellAtPoint(x, y) {
+  if (!maze || view.cell < 1) return null;
+  const cx = Math.floor((x - view.ox) / view.cell);
+  const cy = Math.floor((y - view.oy) / view.cell);
+  if (cx < 0 || cy < 0 || cx >= maze.width || cy >= maze.height) return null;
+  return [cx, cy];
+}
+
+function directionFromPointer(x, y) {
+  const target = cellAtPoint(x, y);
+  if (!target) return null;
+  const dx = target[0] - player[0];
+  const dy = target[1] - player[1];
+  if (dx === 0 && dy === 0) return null;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? "right" : "left";
+  return dy > 0 ? "down" : "up";
+}
+
+function endPointer() {
+  const pointerId = pointer.id;
+  pointer.active = false;
+  pointer.id = null;
+  pointer.inside = false;
+  pointer.nextAt = 0;
+  canvas.classList.remove("dragging");
+  if (pointerId !== null && canvas.hasPointerCapture?.(pointerId)) {
+    try {
+      canvas.releasePointerCapture(pointerId);
+    } catch {
+      // 指针可能已经释放，忽略即可。
+    }
+  }
+}
+
+function onPointerDown(event) {
+  if (event.pointerType === "touch" || event.button !== 0 || !running) return;
+  const point = eventCanvasPoint(event);
+  if (!point) return;
+
+  event.preventDefault();
+  pointer.active = true;
+  pointer.id = event.pointerId;
+  pointer.x = point.x;
+  pointer.y = point.y;
+  pointer.inside = true;
+  pointer.nextAt = performance.now() + POINTER_FIRST_DELAY;
+  canvas.classList.add("dragging");
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch {
+    // Pointer Capture 不可用时仍可通过普通事件操作。
+  }
+
+  const dir = directionFromPointer(point.x, point.y);
+  if (dir) tryMove(dir);
+}
+
+function onPointerMove(event) {
+  if (!pointer.active || event.pointerId !== pointer.id) return;
+  const point = eventCanvasPoint(event);
+  if (!point) {
+    pointer.inside = false;
+    return;
+  }
+  pointer.inside = true;
+  pointer.x = point.x;
+  pointer.y = point.y;
+}
+
+function onPointerUp(event) {
+  if (event.pointerId === pointer.id) endPointer();
+}
+
+function updatePointerMovement(now) {
+  if (!running || !pointer.active || !pointer.inside) return;
+  if (now < pointer.nextAt) return;
+
+  const dir = directionFromPointer(pointer.x, pointer.y);
+  if (!dir) {
+    pointer.nextAt = now + POINTER_BLOCKED_RETRY;
+    return;
+  }
+
+  if (tryMove(dir)) {
+    if (pointer.active) pointer.nextAt = now + POINTER_REPEAT;
+  } else {
+    pointer.nextAt = now + POINTER_BLOCKED_RETRY;
   }
 }
 
 function draw(now) {
   raf = requestAnimationFrame(draw);
   if (!maze) return;
+  updatePointerMovement(now);
 
+  const { cell, ox, oy } = view;
   const elapsed = running ? (now - startedAt) / 1000 : Number(timerEl.textContent) || 0;
   if (running) timerEl.textContent = elapsed.toFixed(1);
-
-  const ox = Math.floor((canvas.width - maze.width * cell) / 2);
-  const oy = Math.floor((canvas.height - maze.height * cell) / 2);
 
   ctx.fillStyle = "#050814";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -133,18 +374,26 @@ function draw(now) {
   ctx.shadowBlur = 0;
 }
 
-function startGame() {
-  overlay.classList.add("hidden");
-  resetLevel();
-  running = true;
+for (const button of difficultyButtons) {
+  button.addEventListener("click", () => setDifficulty(button.dataset.difficulty));
 }
 
 startBtn.addEventListener("click", startGame);
+
+reselectBtn.addEventListener("click", () => {
+  prepareNewRun();
+});
+
+restartBtn.addEventListener("click", () => {
+  if (running && !window.confirm("重新开始？当前进度会丢失。")) return;
+  prepareNewRun();
+});
 
 window.addEventListener("keydown", (event) => {
   const dir = KEYS[event.key];
   if (!dir) return;
   event.preventDefault();
+  if (pointer.active) endPointer();
   tryMove(dir);
 });
 
@@ -176,6 +425,22 @@ canvas.addEventListener(
   { passive: true },
 );
 
-window.addEventListener("resize", resize);
-resetLevel();
-raf = requestAnimationFrame(draw);
+canvas.addEventListener("pointerdown", onPointerDown);
+canvas.addEventListener("pointermove", onPointerMove);
+canvas.addEventListener("pointerup", onPointerUp);
+canvas.addEventListener("pointercancel", onPointerUp);
+canvas.addEventListener("lostpointercapture", endPointer);
+window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("pointercancel", onPointerUp);
+window.addEventListener("blur", endPointer);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) endPointer();
+});
+window.addEventListener("resize", () => {
+  endPointer();
+  resize();
+});
+
+applyDifficultyUI();
+prepareNewRun();
+requestAnimationFrame(draw);

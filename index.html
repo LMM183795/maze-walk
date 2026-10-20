@@ -12,19 +12,30 @@
       <header class="hud">
         <div class="brand">走迷宫</div>
         <div class="stats">
-          <span>第 <strong id="level">1</strong> 关</span>
+          <span><strong id="difficulty-label">标准</strong> · 第 <strong id="level">1</strong> 关</span>
           <span>步数 <strong id="steps">0</strong></span>
           <span>用时 <strong id="timer">0.0</strong>s</span>
         </div>
+        <button id="restart-btn" class="icon-btn" type="button" aria-label="重新开始" title="重新开始" hidden>↻</button>
       </header>
       <main class="stage">
-        <canvas id="maze"></canvas>
+        <canvas id="maze" aria-label="迷宫"></canvas>
         <div id="overlay" class="overlay">
           <div class="card">
             <p class="eyebrow">MAZE WALK</p>
             <h1>走迷宫</h1>
-            <p class="lede">在不断变大的迷宫里找到金色出口。方向键 / WASD 移动，手机可用滑动或屏幕按钮。</p>
+            <p class="lede">轻点走一步，按住鼠标朝指针方向连续移动；也可用方向键 / WASD。手机可滑动或使用屏幕按钮。</p>
+            <div class="difficulty" role="group" aria-labelledby="difficulty-title">
+              <div class="difficulty-title" id="difficulty-title">难度</div>
+              <div class="difficulty-options" id="difficulty-options">
+                <button type="button" data-difficulty="easy" aria-pressed="false">轻松</button>
+                <button type="button" data-difficulty="normal" aria-pressed="true">标准</button>
+                <button type="button" data-difficulty="hard" aria-pressed="false">挑战</button>
+              </div>
+              <p class="difficulty-hint" id="difficulty-hint">第 1 关 11 × 9，经典尺寸，稳步变大</p>
+            </div>
             <button id="start-btn" type="button">开始探索</button>
+            <button id="reselect-btn" class="ghost-btn" type="button" hidden>重新选择难度</button>
           </div>
         </div>
       </main>
