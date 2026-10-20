@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1020" />
+    <title>走迷宫</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="hud">
+        <div class="brand">走迷宫</div>
+        <div class="stats">
+          <span>第 <strong id="level">1</strong> 关</span>
+          <span>步数 <strong id="steps">0</strong></span>
+          <span>用时 <strong id="timer">0.0</strong>s</span>
+        </div>
+      </header>
+      <main class="stage">
+        <canvas id="maze"></canvas>
+        <div id="overlay" class="overlay">
+          <div class="card">
+            <p class="eyebrow">MAZE WALK</p>
+            <h1>走迷宫</h1>
+            <p class="lede">在不断变大的迷宫里找到金色出口。方向键 / WASD 移动，手机可用滑动或屏幕按钮。</p>
+            <button id="start-btn" type="button">开始探索</button>
+          </div>
+        </div>
+      </main>
+      <nav class="pad" aria-label="方向键">
+        <button data-dir="up" type="button">↑</button>
+        <div class="pad-mid">
+          <button data-dir="left" type="button">←</button>
+          <button data-dir="down" type="button">↓</button>
+          <button data-dir="right" type="button">→</button>
+        </div>
+      </nav>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
